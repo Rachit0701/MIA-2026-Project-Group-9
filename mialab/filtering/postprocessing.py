@@ -18,12 +18,24 @@ except ImportError:
 
 def simple_crf(probability, sigma=1.0, compat=2.0, iterations=5):
     """Simplified CRF (spatial Gaussian kernel only), used if pydensecrf is not installed."""
-    unary = -np.log(np.clip(probability, 1e-5, 1.0))
+    """unary = -np.log(np.clip(probability, 1e-5, 1.0))
     q = probability
     for _ in range(iterations):
         messages = np.stack([ndimage.gaussian_filter(q_label, sigma) for q_label in q])
         energy = unary + compat * (1 - messages)
         q = np.exp(-(energy - energy.min(axis=0)))
+        q /= q.sum(axis=0)"""
+    """Simplified CRF (spatial Gaussian kernel only), used if pydensecrf is not installed."""
+    # memory-saving version: float32 instead of float64, and the arrays are updated in place
+    # instead of creating new full-size copies in every iteration (same result as before)
+    q = probability.astype(np.float32)
+    unary = -np.log(np.clip(q, 1e-5, 1.0))
+    for _ in range(iterations):
+        for label in range(q.shape[0]):
+            # energy = unary + compat * (1 - smoothed probability), stored directly in q
+            q[label] = unary[label] + compat * (1 - ndimage.gaussian_filter(q[label], sigma))
+        q -= q.min(axis=0)
+        np.exp(-q, out=q)
         q /= q.sum(axis=0)
     return q
 
