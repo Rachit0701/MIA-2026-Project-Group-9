@@ -268,6 +268,13 @@ def post_process(img: structure.BrainImage, segmentation: sitk.Image, probabilit
 
     print('-' * 10, 'Post-processing', img.id_)
 
+    if kwargs.get('simple_crf_post', False):
+        segmentation = fltr_postp.simple_crf_segmentation(probability, segmentation)
+
+    if kwargs.get('small_components_post', False):
+        segmentation = fltr_postp.remove_small_components(
+            segmentation, kwargs.get('component_min_volume_mm3', 25.0))
+
     # construct pipeline
     pipeline = fltr.FilterPipeline()
     if kwargs.get('simple_post', False):
@@ -279,6 +286,11 @@ def post_process(img: structure.BrainImage, segmentation: sitk.Image, probabilit
                                                      probability), len(pipeline.filters) - 1)
 
     return pipeline.execute(segmentation)
+
+
+def pydensecrf_available() -> bool:
+    """Return whether the optional pydensecrf package is available."""
+    return fltr_postp.pydensecrf_available()
 
 
 def init_evaluator() -> eval_.Evaluator:

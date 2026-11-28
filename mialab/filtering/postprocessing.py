@@ -2,6 +2,7 @@
 
 Image post-processing aims to alter images such that they depict a desired representation.
 """
+import math
 import warnings
 
 import numpy as np
@@ -38,6 +39,62 @@ def simple_crf(probability, sigma=1.0, compat=2.0, iterations=5):
         np.exp(-q, out=q)
         q /= q.sum(axis=0)
     return q
+
+
+def simple_crf_segmentation(probability: sitk.Image, reference: sitk.Image) -> sitk.Image:
+    """Apply simplified CRF probabilities and return a label image."""
+    probability_array = sitk.GetArrayFromImage(probability)
+    if probability_array.ndim != 4:
+        raise ValueError('Probability image must be a 3D vector image')
+
+    channel_first = np.ascontiguousarray(np.moveaxis(probability_array, -1, 0))
+    labels = np.argmax(simple_crf(channel_first), axis=0).astype(np.uint8)
+    output = sitk.GetImageFromArray(labels)
+    output.CopyInformation(reference)
+    return output
+
+
+def remove_small_components(segmentation: sitk.Image, min_volume_mm3: float = 25.0) -> sitk.Image:
+    """Remove per-label 26-connected components below a physical-volume threshold."""
+    if segmentation.GetDimension() != 3 or segmentation.GetNumberOfComponentsPerPixel() != 1:
+        raise ValueError('Segmentation must be a 3D scalar label image')
+    if not math.isfinite(min_volume_mm3) or min_volume_mm3 <= 0:
+        raise ValueError('min_volume_mm3 must be a finite positive value')
+
+    labels = sitk.GetArrayFromImage(segmentation)
+    voxel_volume = math.prod(segmentation.GetSpacing())
+    if not math.isfinite(voxel_volume) or voxel_volume <= 0:
+        raise ValueError('Segmentation spacing must define a positive voxel volume')
+    min_voxels = math.ceil(min_volume_mm3 / voxel_volume)
+    output = labels.copy()
+    connectivity = ndimage.generate_binary_structure(3, 3)
+
+    for label_value in np.unique(labels):
+        if label_value == 0:
+            continue
+
+        components, component_count = ndimage.label(labels == label_value, structure=connectivity)
+        if component_count == 0:
+            continue
+
+        sizes = np.bincount(components.ravel(), minlength=component_count + 1)
+        sizes[0] = 0
+        retained = np.flatnonzero(sizes >= min_voxels)
+        if retained.size == 0:
+            retained = np.array([int(np.argmax(sizes))])
+
+        keep_component = np.zeros(component_count + 1, dtype=bool)
+        keep_component[retained] = True
+        output[(components > 0) & ~keep_component[components]] = 0
+
+    result = sitk.GetImageFromArray(output)
+    result.CopyInformation(segmentation)
+    return result
+
+
+def pydensecrf_available() -> bool:
+    """Return whether the optional pydensecrf package is available."""
+    return crf is not None
 
 
 class ImagePostProcessing(pymia_fltr.Filter):
